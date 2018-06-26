@@ -1,0 +1,1 @@
+# macsyma-addon
