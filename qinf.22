@@ -1,0 +1,331 @@
+/*                                               -*-macsyma-*-
+  quantum information package for macsyma
+*/
+
+load("eigen")$  /* to define conjugate */
+load("qinfl >")$
+/* load("mmacom >")$ */
+load("log2")$
+load("kprod >")$
+load("diag")$
+
+qudit_states : 2$
+
+mapapply(f, lst) := map(lambda([n],apply((+f),n)),lst)$
+
+mat_trace(m) := apply("+",makelist(m[i,i],i,makelist(j,j,1,length(m))))$
+
+ctranspose(m) := conjugate(transpose(m))$
+
+/*
+  Linear algebra routines
+*/
+
+ketp(e) := matrixp(e) and (length(inpart(e,1)) = 1)$
+brap(e) := matrixp(e) and (length(e) = 1)$
+braketp(e) := ketp(e) or brap(e)$
+
+square_matp(e) := matrixp(e) and (length(e) = length(inpart(e,1)))$
+
+unitary1p(m) := square_matp(m) and (trigsimp(m . ctranspose(m)) = 1)$
+
+normalize_vector(v) := v/sqrt(v . conjugate(v))$
+
+normalize_operator(m) := m/mat_trace(m)$
+
+ktolist(ket) := inpart(transpose(ket),1)$
+
+ketstomat(kets) := apply('matrix,map(ktolist,kets))$
+
+/*
+  Partial trace over one or more components.
+  This computes partial trace one component at a time.
+*/
+
+ptrace(A,[qs]) := block([i,B,nA],
+  qs : sort(qs,"<"),
+  B : A,
+  for i:1 thru length(qs) do (
+    B : ptrace_one_dimension(qudit_states,B,qs[i]),
+    qs : qs - 1),
+  B)$
+
+/* The same as above, but qudits of dimension b are used */
+ptracen(b,A,[qs]) := block([i,Bm,b,nA],
+  qs : sort(qs,"<"),
+  Bm : A,
+  for i:1 thru length(qs) do (
+    Bm : ptrace_one_dimension(b,Bm,qs[i]),
+    qs : qs - 1),
+  Bm)$
+
+ptrace_one_dimension(b,A,q) := block([nA,nbitsA,nbitsB,Bm,x,y,x1,x2,y1,y2,
+  i1,i2,j,k,j1,j2,k1,k2,sum,qm,ind1,ind2],
+  nA : length(A),
+  nbitsA : radcan(log(nA)/log(b)),
+  nbitsB : nbitsA - 1,
+  nB : b ^ nbitsB,
+  Bm : zeromatrix(nB,nB),
+  x : makelist(0,i,1,nbitsB),
+  y : makelist(0,i,1,nbitsB),
+  q : nbitsA + 1 - q,
+  for i1:1 thru nB do (
+    for i2:1 thru nB do (
+      sum : 0,
+      qm : q - 1,
+      x1 : rest(x,-(nbitsB-qm)),
+      x2 : rest(x,qm),
+      y1 : rest(y,-(nbitsB-qm)),
+      y2 : rest(y,qm),
+      j1 : ptrace_vec_to_int(x1,b),
+      j2 : b ^ q * ptrace_vec_to_int(x2,b),
+      k1 : ptrace_vec_to_int(y1,b),
+      k2 : b ^ q * ptrace_vec_to_int(y2,b),
+      for j:0 thru b-1 do (
+        ind1 : j1+j*b^qm+j2+1,
+	ind2 : k1+j*b^qm+k2+1,
+	sum : sum + A[ind1,ind2]),
+      Bm[i1,i2] : sum,
+      ptrace_incr_vec(y,b)),
+    ptrace_incr_vec(x,b)),
+  Bm)$
+
+tensor_product([a]) := block([n,c,i],
+  n : length(a),
+  c : a[1],
+  for i:2 thru n do (
+    c : kronecker_product(c,a[i])),
+  c)$
+
+infix("OTIMES")$
+"OTIMES" (a,b) := kronecker_product(a,b)$
+
+tensor_power(mat,n) := apply('tensor_product,makelist(mat,i,1,n))$
+
+/* Quantum information routines */
+
+ket([a]) := transpose(matrix(a))$
+bra([a]) := matrix(a)$
+
+/*
+  return product state of qubits in eigenstates
+  of sigma_z, represented in given basis
+  eg. ket(plusx,minusx,0,1,1,0)
+*/
+
+_ket(zero,one,a) := block([v,i],
+  if a[1] = 0 then v:transpose(zero)
+  else v:transpose(one),
+  for i:2 thru length(a) do (
+    if a[i] = 0 then v: tensor_product(v,transpose(zero))
+    else v:tensor_product(v,transpose(one))),
+  v)$
+
+ketz([a]) := _ket([1,0],[0,1],a)$
+ketx([a]) := _ket([1,1]/sqrt(2),[1,-1]/sqrt(2),a)$
+kety([a]) := _ket([1,%i]/sqrt(2),[1,-%i]/sqrt(2),a)$
+
+braz([a]) := transpose(apply('ketz,a))$
+brax([a]) := transpose(apply('ketx,a))$
+bray([a]) := conjugate(transpose(apply('kety,a)))$
+
+ket_n(i,[a]) := block([],
+  if i = 1 then return(apply('ketx,a)),
+  if i = 2 then return(apply('kety,a)),
+  if i = 3 then return(apply('kety,a)),
+  false)$
+
+bra_n([a]) := conjugate(transpose(apply('ket_n,a)))$
+
+listket(k) := inpart(transpose(k),1)$
+
+matkets([k]) := apply('matrix,map(listket,k))$
+
+/* Projection operators along z axis */
+Prz[0] : matrix([1,0],[0,0])$
+Prz[1] : matrix([0,0],[0,1])$
+
+/*
+  general projection operator pair for one qubit. this uses a
+  particular parametrization.
+*/
+Pr_n(a,phi) := block([p1,p2],
+  p1 : matrix([a,sqrt(a*(1-a))*exp(-%i*phi)],
+              [sqrt(a*(1-a))*exp(%i*phi),1-a]),
+  [p1,ident(2)-p1])$
+
+tomatrix(v) := block(
+  if listp(v) then
+  v : matrix(v)
+  else if not matrixp(v) then (
+    print("Error, arg neither matrix nor list"),
+    return(0)),
+  v)$
+
+proj(v) := block([],
+  v : tomatrix(v),
+  if length(v) = 1 then
+    return(ctranspose(v) . v)
+  else
+    return(v . ctranspose(v)))$
+
+/*
+  Compute ket corresponding to projection operator.
+*/
+
+tovect(A) := block([t,pos],
+  t : simtran(A),
+  if sublist_indices(part(t,1,1),lambda([x],x=0)) = [2] then (
+    return(transpose(second(t))) )
+  else
+    return(transpose(last(t))))$
+
+pauli_0 : ident(2)$
+pauli_z : matrix([1,0],[0,-1])$
+pauli_y : matrix([0,-%i],[%i,0])$
+pauli_x : matrix([0,1],[1,0])$
+
+_pauli : [
+    ident(2),
+    matrix([0,1],[1,0]),
+    matrix([0,-%i],[%i,0]),
+    matrix([1,0],[0,-1])]$
+
+pauli[i] := _pauli[i+1]$
+
+pauli_product([a]) := apply('tensor_product,map(lambda([i],pauli[i]),a))$
+
+invpauliexp(t) := block([n,i,m,nb],
+  n : length(t),
+  nb : radcan(log(n)/log(4)),
+  v : makelist(0,i,1,nb),
+  m : t[1]*apply('pauli_product,v),
+  for i thru n-1 do (
+    ptrace_increment_numeration(v,4),
+    m : m + t[i+1]*apply('pauli_product,v)),
+  m)$
+
+_one_pauli_coeff(m,v) := mat_trace(apply('tensor_product,map(
+  lambda([i],pauli[i]), v)) . m)/(2^length(v))$
+
+pauliexp(m) := block([nbits,v,i,c:[]],
+  nbits: log2(length(m)),
+  v : makelist(0,i,1,nbits),
+  for i thru length(m)^2 do (
+    c : append(c, [ _one_pauli_coeff(m,v) ]),
+    ptrace_increment_numeration(v,4)),
+  c)$
+
+tpauliexp(m) := ket2kten_n(pauliexp(m),4)$
+
+correlation_tensor(t,[v]) := block([n:length(t)],
+  if n = 4 ^ length(v) then
+   t[ptrace_numeration_to_int(v,4)+1]
+  else
+   error("tensor data requires ",radcan(log(n)/log(4)), " indices"))$
+
+/*
+  Rotate through angle gamme about direction
+*/
+spinor_rotation_trig(phi, theta, gamma) := block([sg],
+  sg:sin(gamma/2),
+  cg:cos(gamma/2),
+  st:sin(theta),
+  ct:cos(theta),
+  sp:sin(phi),
+  cp:cos(phi),
+  matrix(
+   [cg-%i*ct*sg, (-%i*st*cp-st*sp)*sg],
+   [(-%i*st*cp + st*sp)*sg, cg+%i*ct*sg]))$
+
+/* this one uses exp instead of cos and sin */
+spinor_rotation(phi,theta,gamma) := block([sg],
+   sg:sin(gamma/2),
+   cg:cos(gamma/2),
+   st:sin(theta),
+   ct:cos(theta),
+   sp:sin(phi),
+   cp:cos(phi),
+   matrix(
+    [cg-%i*ct*sg,  -%i*st*exp(-%i*phi)*sg],
+    [-%i*st*exp(%i*phi)*sg,  cg+%i*ct*sg]))$
+
+/*
+  Gates and related code 
+*/
+
+insert_operator(nbits, [insargs]) := block([oplist:makelist(ident(2),i,1,
+  nbits)],
+  map(lambda([arg], block([mop:first(arg),posns:rest(arg,1)],
+    map(lambda([i],oplist[i]:mop), posns))),insargs),
+  apply('tensor_product,oplist))$
+
+controlled_gate(nbits,qop,t,clst) := ident(2^nbits) +
+  insert_operator(nbits,cons(proj(ketz(1)),clst),[qop-ident(2),t])$
+
+cnot(nbits,t,[c]) := controlled_gate(nbits,pauli[1],t,c)$
+cphase(nbits,t,[c]) := controlled_gate(nbits,pauli[3],t,c)$
+crot(nbits,t,[c]) := controlled_gate(nbits,%i*pauli[2],t,c)$
+swap(nbits,t1,t2):= cnot(nbits,t1,t2) . cnot(nbits,t2,t1) . cnot(nbits,t1,t2)$
+toffoli(nbits,t,c1,c2) := cnot(nbits,t,c1,c2)$
+fredkin(nbits,t1,t2,c) := controlled_gate(nbits,pauli[1],t2,[c,t1]).
+  controlled_gate(nbits,pauli[1],t1,[c,t2]).
+  controlled_gate(nbits,pauli[1],t2,[c,t1])$
+
+hadamard : (1/sqrt(2) * matrix([1,1],[1,-1]))$
+
+hadamard(nbits,[t]) := insert_operator(nbits,cons(hadamard,t))$
+
+bell[i,j] := (ketz(0,j) + (-1)^i * ketz(1,flip(j)))/sqrt(2)$
+ghz[i,j,k] := (ketz(0,j,k) + (-1)^i * ketz(1,flip(j),flip(k)))/sqrt(2)$
+werner(a,i,j) := a*(proj(bell[i,j])) + (1-a)*ident(4)/4$
+
+/* von Neumann entropy */
+entropy(rho) := block([x,evs,sum:0],
+  evs : eigenvalues(rho),
+  /* following is kludged transpose */
+  evs : map(lambda([i,j], [i,j]), evs[1], evs[2]),
+  for x in evs do (
+    if not(x[1] = 0) then (
+      sum : sum - x[2]*x[1]*log2(x[1]))),
+  sum)$
+
+list_eivals(lst) := apply('append,apply('map, cons(lambda([a,b],
+   makelist(a,i,1,b)), lst)))$
+
+/*
+ Wootters' concurrence
+ This should be separated into more than two functions
+ to see intermediate results.
+*/
+
+/*
+ This returns [sqrt(v1),sqrt(v2),sqrt(v3),sqrt(v4)].
+ This function allows the used to examine the
+ results
+*/
+concurrence_eivals(rho) := block([sr],
+  sr : mat_function(sqrt,rho),
+  list_eivals(eigenvalues(mat_function(sqrt,(sr . 
+    (pauli[2] otimes pauli[2]) . conjugate(rho) . 
+    (pauli[2] otimes pauli[2]) . sr)))))$
+
+concurrence(rho) := block( [vals],
+     vals : concurrence_eivals(rho),
+     vals : sort(sqrt(factor(vals^2)),">"),
+     ratsimp(max(0,apply("+",cons(inpart(vals,1),-1*rest(vals))))))$
+
+/* Floating point von Neumann entropy */
+entropyf(rho) := float(entropy(rho))$
+
+/* Reny entropy */
+renyi_entropy(a,rho) := block([x,evs,sum:0],
+  evs : eigenvalues(rho),
+  evs : map( lambda([i,j], [i,j]), evs[1], evs[2]),
+  for x in evs do (
+    if not(x[1] = 0) then (
+      sum : sum + x[2]*(x[1])^a)),
+  log2(sum)/(1-a))$
+
+/* Floating point renyi entropy */
+renyi_entropyf(a,rho) := float(renyi_entropy(a,rho))$

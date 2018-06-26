@@ -1,0 +1,13 @@
+/* Kronecker product of two square matrices              -*-macsyma-*-*/
+kronecker_product(m1,m2) := block([res,t,t1],
+  if (not matrixp(m1)) or (not matrixp(m2)) then error("Wrong args"),
+  t1 : makelist(0,i,1,length(m1)),
+  for j : 1 thru length(m1) do (
+    t : m1[j,1]*m2,
+    for i : 2 thru length(transpose(m1)) do (
+      t : addcol(t, m1[j,i]*m2)),
+    t1[j] : t),
+  res : t1[1],
+  for i : 2 thru length(t1) do (
+    res : addrow(res,t1[i])),
+  res)$
