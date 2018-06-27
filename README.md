@@ -11,4 +11,5 @@ Packages available:
 - GAMALG : Gamma matrices algebra package
 - QINF   : Quantum information package
 - DIAG   : Diagonal matrices package
+- VECT   : VECTOR Symbolic package (Stoutemyer version)
 
