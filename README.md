@@ -8,7 +8,7 @@ The directory structure is similar to ITS: SHARE and SHARE2 exist already, SHARE
 
 Packages available:
 
-- GAMALG : Gamma matrices algebra package
+- GAMALG : Gamma matrices algebra package (by Stephen Wolfram and Anthony Terrano)
 - QINF   : Quantum information package
 - DIAG   : Diagonal matrices package
 - VECT   : VECTOR Symbolic package (Stoutemyer version)
